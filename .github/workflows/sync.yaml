@@ -1,0 +1,53 @@
+name: Mirror Repo
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Runs automatically every day at midnight
+  workflow_dispatch:      # Allows you to run it manually with a button
+
+jobs:
+  run_mirror:
+    runs-on: ubuntu-latest
+    permissions:
+        issues: write
+        contents: write
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GIT_MIRROR_TOKEN }}
+          
+      - name: Fetch and overwrite from source
+        run: |
+          # 1. Add the public source as a remote
+          git remote add public_source https://git.tartarus.org/simon/putty.git
+          
+          # 2. Get all branches and tags from source
+          git fetch public_source
+
+          # 3. Save current workflow to temp location
+          cp .github/workflows/sync.yaml /tmp/sync.yaml
+          
+          # 4. Force your 'main' to match the source's 'main' (Overwrites your repo)
+          git checkout main || git checkout -b main
+          git reset --hard public_source/main
+
+          # 5. Restore workflow file
+          mkdir -p .github/workflows
+          cp /tmp/sync.yaml .github/workflows/sync.yaml
+          
+          # 6. Commit restored workflow so it exists in new history
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f .github/workflows/sync.yaml
+          git commit -m "Restore mirror automation workflow" || echo "No changes to workflow"
+          
+          # 7. Push the clean copy to your repo
+          git push origin main --force
+
+      - name: Create Issue on Failure
+        if: failure()
+        run: |
+          gh issue create --title "Sync Failed: puTTY Source Offline" --body "The scheduled mirror sync failed. Check the [Actions logs](https://github.com/${{ github.repository }}/actions) for details. The source at https://git.tartarus.org/?p=simon/putty.git may be down."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
